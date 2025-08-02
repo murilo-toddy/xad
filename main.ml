@@ -72,31 +72,37 @@ let piece_at row col board =
 ;;
 
 let print_board_with_moves board moves =
+    let colored = "\027[41m" in
+    let reset = "\027[0m" in
     let print_col_edges () = print_string ("  " ^ String.make (2 * rows + 1) '-') in
-    let print_row_edges () = print_string "|" in
+    let print_row_edges () = print_string (reset ^ "|") in
     let newline () = print_endline "" in
-    print_col_edges (); newline ();
-    let rec print_row row =
-        if row >= 8 
-        then ()
-        else
-            let rec print_cell col =
-                if col >= 8
-                then ()
-                else
-                    print_string (string_of_piece (piece_at row col board));
-                    print_cell (col + 1)
-            in
-            Printf.printf "%d " row;
-            print_row_edges ();
-            print_row_edges ();
-            newline ();
-            print_row (row + 1);
-            print_cell 0
-    in
-    print_row 0;
-    print_col_edges (); newline ();
-    print_endline "   0 1 2 3 4 5 6 7";
+    print_col_edges ();
+    newline ();
+    for row = 0 to (rows - 1) do
+        Printf.printf "%d " row;
+        print_row_edges ();
+        let rec to_row_str acc col =
+            if col = cols
+            then acc
+            else
+                let piece = string_of_piece (piece_at row col board) in
+                let colored_piece =
+                    if List.exists (
+                        fun (x, y) -> (x, y) = (row, col)
+                    ) moves
+                    then colored ^ piece
+                    else reset ^ piece in
+                to_row_str (acc @ [colored_piece]) (col + 1)
+        in
+        print_string (String.concat " " (to_row_str [] 0));
+        print_row_edges ();
+        newline ();
+    done;
+    print_col_edges ();
+    newline ();
+    let row_coords = String.concat " " (List.init rows (string_of_int)) in
+    print_endline ("   " ^ row_coords);
 ;;
 
 let print_board board = print_board_with_moves board [];;
@@ -118,7 +124,7 @@ let valid_moves row col piece color board: (int * int) list =
       - king currently in check
       - moving a piece would put king in check
     *)
-    let contains_friend (row, col) =
+    let doesnt_contain_friend (row, col) =
        match piece_at row col board with
        | Some (_, c) when c = color -> false
        | _ -> true
@@ -131,7 +137,7 @@ let valid_moves row col piece color board: (int * int) list =
             (row + 1, col - 1);
             (row - 1, col - 1);
         ] in
-        List.filter contains_friend moves
+        List.filter doesnt_contain_friend moves
     | Rook ->
         let rec navigate (row, col) (dir_row, dir_col) board moves =
             let (next_row, next_col) = (row + dir_row, col + dir_col) in
@@ -159,7 +165,7 @@ let valid_moves row col piece color board: (int * int) list =
             (row - 1, col - 2);
             (row - 2, col - 1);
         ] in
-        List.filter contains_friend moves
+        List.filter doesnt_contain_friend moves
     | Pawn ->
         (* TODO: en passant *)
         let direction = if color = White then 1 else -1 in
@@ -186,9 +192,11 @@ let valid_moves row col piece color board: (int * int) list =
     in
     List.filter valid_coordinates moves
 
-let print_valid_moves color (row, col) moves =
+let print_valid_moves color (row, col) moves board =
     Printf.printf "Valid moves for %s at (%d, %d): " (string_of_color color) row col;
     List.iter (fun (row, col) -> Printf.printf "(%d, %d) " row col) moves;
+    print_endline "";
+    print_board_with_moves board moves;
     print_endline "";
 ;;
 
@@ -198,7 +206,7 @@ let is_move_valid (from_row, from_col) (to_row, to_col) (player: color) (board: 
     | Some (_, color) when player != color -> false
     | Some (piece, color) ->
         let moves = valid_moves from_row from_col piece color board in
-        print_valid_moves player (from_row, from_col) moves;
+        print_valid_moves player (from_row, from_col) moves board;
         List.exists (fun (pos_row, pos_col) -> 
             (pos_row, pos_col) = (to_row, to_col)
         ) moves
