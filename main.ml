@@ -10,6 +10,12 @@ type color = Black | White;;
 type game_piece = piece * color;;
 type board = game_piece option list list
 
+type state =
+    | Running
+    | Draw
+    | Win of color
+;;
+
 let rows = 8;;
 let cols = 8;;
 
@@ -65,10 +71,34 @@ let string_of_color = function
 
 let valid_coordinates (row, col) = row >= 0 && row < rows && col >= 0 && col < cols;;
 
-let piece_at row col board =
+let piece_at row col (board: board) =
     if valid_coordinates (row, col)
     then List.nth (List.nth board row) col
     else None
+;;
+
+(* linear lookup, returns first find *)
+let search_piece (piece: piece) (color: color) (board: board) =
+    let rec search_row row =
+        let rec search_col col =
+            if col >= cols
+            then search_row (row + 1)
+            else
+                match piece_at row col board with
+                | Some (p, c) when p = piece && c = color -> Some (row, col)
+                | _ -> search_col (col + 1)
+        in
+        if row >= rows
+        then None
+        else search_col 0
+    in
+    search_row 0
+;;
+
+let search_king color board =
+    match search_piece King color board with
+    | Some pos -> pos
+    | None -> assert false
 ;;
 
 let print_board_with_moves board moves =
@@ -118,27 +148,21 @@ let next_player = function
     | Black -> White
 ;;
 
-let valid_moves row col piece color board: (int * int) list =
+let valid_moves row col board: (int * int) list =
     (* 
       TODO: handle cases
       - king currently in check
       - moving a piece would put king in check
     *)
-    let doesnt_contain_friend (row, col) =
-       match piece_at row col board with
-       | Some (_, c) when c = color -> false
-       | _ -> true
-    in
-    let moves = match piece with
-    | King ->
-        let moves = [
-            (row + 1, col + 1);
-            (row - 1, col + 1);
-            (row + 1, col - 1);
-            (row - 1, col - 1);
-        ] in
-        List.filter doesnt_contain_friend moves
-    | Rook ->
+    match piece_at row col board with
+    | None -> []
+    | Some (piece, color) ->
+        let doesnt_contain_friend (row, col) =
+           match piece_at row col board with
+           | Some (_, c) when c = color -> false
+           | _ -> true
+        in
+        (* goes out in specific direction until other piece is found *)
         let rec navigate (row, col) (dir_row, dir_col) board moves =
             let (next_row, next_col) = (row + dir_row, col + dir_col) in
             if valid_coordinates (next_row, next_col) then
@@ -150,47 +174,92 @@ let valid_moves row col piece color board: (int * int) list =
                     navigate (next_row, next_col) (dir_row, dir_col) board moves
             else moves
         in
-        navigate (row, col) (1, 0) board []
-            @ navigate (row, col) (-1, 0) board []
-            @ navigate (row, col) (0, 1) board []
-            @ navigate (row, col) (0, -1) board []
-    | Knight ->
-        let moves = [
-            (row + 1, col + 2);
-            (row + 2, col + 1);
-            (row - 1, col + 2);
-            (row - 2, col + 1);
-            (row + 1, col - 2);
-            (row + 2, col - 1);
-            (row - 1, col - 2);
-            (row - 2, col - 1);
-        ] in
-        List.filter doesnt_contain_friend moves
-    | Pawn ->
-        (* TODO: en passant *)
-        let direction = if color = White then 1 else -1 in
-        let moves = match piece_at (row + direction) col board with
-        | Some (p, _) -> []
-        | _ -> [(row + direction, col)] 
+        let navigate_rows row col board =
+            navigate (row, col) (1, 0) board []
+                @ navigate (row, col) (-1, 0) board []
+                @ navigate (row, col) (0, 1) board []
+                @ navigate (row, col) (0, -1) board []
         in
-        let moves = match (color, row) with
-        | White, 1
-        | Black, 6 -> (row + 2 * direction, col) :: moves
-        | _ -> moves
+        let navigate_diags row col board =
+            navigate (row, col) (1, 1) board []
+                @ navigate (row, col) (1, -1) board []
+                @ navigate (row, col) (-1, 1) board []
+                @ navigate (row, col) (-1, -1) board []
         in
-        let capture (at_row, at_col) =
-            match piece_at at_row at_col board with
-            | Some (_, c) when c != color -> [(at_row, at_col)]
-            | _ -> []
+        let moves = match piece with
+        | King ->
+            let moves = [
+                (row + 1, col + 1);
+                (row - 1, col + 1);
+                (row + 1, col - 1);
+                (row - 1, col - 1);
+            ] in
+            List.filter doesnt_contain_friend moves
+        | Knight ->
+            let moves = [
+                (row + 1, col + 2);
+                (row + 2, col + 1);
+                (row - 1, col + 2);
+                (row - 2, col + 1);
+                (row + 1, col - 2);
+                (row + 2, col - 1);
+                (row - 1, col - 2);
+                (row - 2, col - 1);
+            ] in
+            List.filter doesnt_contain_friend moves
+        | Rook -> navigate_rows row col board
+        | Bishop -> navigate_diags row col board
+        | Queen ->
+            navigate_rows row col board
+                @ navigate_diags row col board
+        | Pawn ->
+            (* TODO: en passant *)
+            let direction = if color = White then 1 else -1 in
+            let moves = match piece_at (row + direction) col board with
+            | Some (p, _) -> []
+            | _ -> [(row + direction, col)]
+            in
+            let moves = match (color, row) with
+            | White, 1
+            | Black, 6 -> (row + 2 * direction, col) :: moves
+            | _ -> moves
+            in
+            let capture (at_row, at_col) =
+                match piece_at at_row at_col board with
+                | Some (_, c) when c != color -> [(at_row, at_col)]
+                | _ -> []
+            in
+            let moves = moves
+                @ capture (row + direction, col + 1)
+                @ capture (row + direction, col - 1)
+            in
+            moves
         in
-        let moves = moves 
-            @ capture (row + direction, col + 1) 
-            @ capture (row + direction, col - 1) 
+        List.filter valid_coordinates moves
+
+(* TODO(perf): update to set *)
+let all_moves_for color board =
+    let rec search_row row acc =
+        let rec search_col col acc =
+            if col >= cols
+            then search_row (row + 1) acc
+            else
+                match piece_at row col board with
+                | Some (p, c) when c != color -> search_col (col + 1) (acc @ (valid_moves row col board))
+                | _ -> search_col (col + 1) acc
         in
-        moves
-    | _ -> []
+        if row >= rows
+        then acc
+        else search_col 0 acc
     in
-    List.filter valid_coordinates moves
+    search_row 0 []
+;;
+
+let is_check color board =
+    let king_pos = search_king color board in
+    let moves_for_opponent = all_moves_for (next_player color) board in
+    List.exists (fun pos -> pos = king_pos) moves_for_opponent
+;;
 
 let print_valid_moves color (row, col) moves board =
     Printf.printf "Valid moves for %s at (%d, %d): " (string_of_color color) row col;
@@ -205,8 +274,7 @@ let is_move_valid (from_row, from_col) (to_row, to_col) (player: color) (board: 
     | None -> false
     | Some (_, color) when player != color -> false
     | Some (piece, color) ->
-        let moves = valid_moves from_row from_col piece color board in
-        print_valid_moves player (from_row, from_col) moves board;
+        let moves = valid_moves from_row from_col board in
         List.exists (fun (pos_row, pos_col) -> 
             (pos_row, pos_col) = (to_row, to_col)
         ) moves
@@ -244,12 +312,65 @@ let move_if_valid (from_row, from_col) (to_row, to_col) (player: color) (board: 
     )
 ;;
 
-let () =
-    let board = starting_board rows cols in
-    let player = Black in
-    let board = move (6, 0) (7, 7) board in
-    let board, player = move_if_valid (7, 0) (5, 0) player board in
-    let player = Black in
-    let board, player = move_if_valid (5, 0) (5, 2) player board in
-    print_game board player
+let check_game_over player board =
+    Running
 ;;
+
+let play_turn (from_row, from_col) (to_row, to_col) player board =
+    let board, next_player = move_if_valid (from_row, from_col) (to_row, to_col) player board in
+    let new_state = check_game_over player board in
+    (new_state, board, next_player)
+;;
+
+(*
+  Engine
+  - print board state
+  - get next play
+  - validate next play
+  - make move
+  - check end condition
+*)
+let play_game board =
+    let read_move () =
+        let rec read_coord () =
+            let explode str =
+                let rec exp idx l =
+                    if idx < 0
+                    then l
+                    else exp (idx - 1) (str.[idx] :: l)
+                in
+                exp (String.length str - 1) []
+            in
+            let line = String.trim (read_line ()) in
+            match explode line with
+            | [ch1; ch2] -> (int_of_char ch1 - 48, int_of_char ch2 - 48)
+            | _ ->
+                print_endline "invalid input";
+                read_coord ()
+
+        in
+        print_string "select a piece: ";
+        read_coord ()
+    in
+    let player = White in
+    let state = Running in
+    let rec game_loop (state: state) (board: board) (player: color) =
+        print_game board player;
+        let (from_row, from_col) = read_move () in
+        let moves = valid_moves from_row from_col board in
+        print_valid_moves player (from_row, from_col) moves board;
+        let (to_row, to_col) = read_move () in
+        let state, board, next_player = play_turn (from_row, from_col) (to_row, to_col) player board in
+        match state with
+        | Running -> game_loop state board next_player
+        | Draw ->
+            print_string "game over: draw\n";
+            exit 0;
+        | Win color ->
+            Printf.printf "game over: winner %s\n" (string_of_color color);
+            exit 0;
+    in
+    game_loop state board player
+;;
+
+let () = play_game (starting_board rows cols);;
