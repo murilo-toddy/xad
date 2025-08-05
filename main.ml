@@ -9,6 +9,7 @@ type piece =
 type color = Black | White;;
 type game_piece = piece * color;;
 type board = game_piece option list list
+type coordinate = int * int;;
 
 type state =
     | Running
@@ -18,6 +19,28 @@ type state =
 
 let rows = 8;;
 let cols = 8;;
+
+let coord_of_string s =
+    let explode s =
+        let rec exp idx l = if idx < 0 then l else exp (idx - 1) (s.[idx] :: l) in
+        exp (String.length s - 1) []
+    in
+    if String.length s != 2
+    then None
+    else match explode s with
+    (* chess notation shows col first *)
+    | [col_char; row_char] ->
+        let int_from_ref ~ref ~value = int_of_char value - int_of_char ref in
+        Some (int_from_ref ~ref:'1' ~value:row_char, int_from_ref ~ref:'a' ~value:col_char)
+    | _ -> None
+;;
+
+let string_of_coord (row, col) =
+    let string_from_ref ~ref ~value =
+        String.make 1 (char_of_int (value + int_of_char ref))
+    in
+    string_from_ref ~value:col ~ref:'a' ^ string_from_ref ~value:row ~ref:'1'
+;;
 
 let pawn_row cols = List.init cols (fun _ -> Pawn);;
 let piece_row = [Rook; Knight; Bishop; Queen; King; Bishop; Knight; Rook];;
@@ -110,7 +133,7 @@ let print_board_with_moves board moves =
     print_col_edges ();
     newline ();
     for row = 0 to (rows - 1) do
-        Printf.printf "%d " row;
+        Printf.printf "%c " (char_of_int (row + int_of_char '0' + 1));
         print_row_edges ();
         let rec to_row_str acc col =
             if col = cols
@@ -131,7 +154,7 @@ let print_board_with_moves board moves =
     done;
     print_col_edges ();
     newline ();
-    let row_coords = String.concat " " (List.init rows (string_of_int)) in
+    let row_coords = "a b c d e f g h" in
     print_endline ("   " ^ row_coords);
 ;;
 
@@ -255,15 +278,15 @@ let all_moves_for color board =
     search_row 0 []
 ;;
 
-let is_check color board =
+let is_check board color =
     let king_pos = search_king color board in
     let moves_for_opponent = all_moves_for (next_player color) board in
     List.exists (fun pos -> pos = king_pos) moves_for_opponent
 ;;
 
 let print_valid_moves color (row, col) moves board =
-    Printf.printf "Valid moves for %s at (%d, %d): " (string_of_color color) row col;
-    List.iter (fun (row, col) -> Printf.printf "(%d, %d) " row col) moves;
+    Printf.printf "Valid moves for %s at %s: " (string_of_color color) (string_of_coord (row, col));
+    List.iter (fun (row, col) -> Printf.printf "%s " (string_of_coord (row, col))) moves;
     print_endline "";
     print_board_with_moves board moves;
     print_endline "";
@@ -300,13 +323,18 @@ let move (from_row, from_col) (to_row, to_col) (board: board) =
     new_board
 ;;
 
-let move_if_valid (from_row, from_col) (to_row, to_col) (player: color) (board: board) =
-    if is_move_valid (from_row, from_col) (to_row, to_col) player board
-    then move (from_row, from_col) (to_row, to_col) board, next_player player
+(* check if player's king is in check after move *)
+let move_if_valid from_coord to_coord (player: color) (board: board) =
+    let new_board, next_player = move from_coord to_coord board, next_player player in
+    if is_move_valid from_coord to_coord player board &&
+        not (is_check board player)
+    then new_board, next_player
     else (
         Printf.printf
-            "ERROR: Invalid move from (%d, %d) to (%d, %d) for %s\n"
-            from_row from_col to_row to_col (string_of_color player)
+            "ERROR: Invalid move from %s to %s for %s\n"
+                (string_of_coord from_coord)
+                (string_of_coord to_coord)
+                (string_of_color player)
         ;
         board, player
     )
@@ -333,23 +361,14 @@ let play_turn (from_row, from_col) (to_row, to_col) player board =
 let play_game board =
     let read_move () =
         let rec read_coord () =
-            let explode str =
-                let rec exp idx l =
-                    if idx < 0
-                    then l
-                    else exp (idx - 1) (str.[idx] :: l)
-                in
-                exp (String.length str - 1) []
-            in
+            print_string "select a piece: ";
             let line = String.trim (read_line ()) in
-            match explode line with
-            | [ch1; ch2] -> (int_of_char ch1 - 48, int_of_char ch2 - 48)
-            | _ ->
+            match coord_of_string line with
+            | Some coord -> coord
+            | None ->
                 print_endline "invalid input";
                 read_coord ()
-
         in
-        print_string "select a piece: ";
         read_coord ()
     in
     let player = White in
