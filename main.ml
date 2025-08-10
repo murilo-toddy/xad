@@ -20,11 +20,12 @@ type state =
 let rows = 8;;
 let cols = 8;;
 
+let explode (s: string) =
+    let rec exp idx l = if idx < 0 then l else exp (idx - 1) (s.[idx] :: l) in
+    exp (String.length s - 1) []
+;;
+
 let coord_of_string s =
-    let explode s =
-        let rec exp idx l = if idx < 0 then l else exp (idx - 1) (s.[idx] :: l) in
-        exp (String.length s - 1) []
-    in
     if String.length s != 2
     then None
     else match explode s with
@@ -42,39 +43,51 @@ let string_of_coord (row, col) =
     string_from_ref ~value:col ~ref:'a' ^ string_from_ref ~value:row ~ref:'1'
 ;;
 
-let pawn_row cols = List.init cols (fun _ -> Pawn);;
-let piece_row = [Rook; Knight; Bishop; Queen; King; Bishop; Knight; Rook];;
-let rec empty_board (rows: int) (cols: int) =
-    let rec inner board row col =
-        match row, col with
-        (* end of iteration *)
-        | 1, 0 -> board
-        (* end of col, add a new row *)
-        | _, 0 -> inner ([] :: board) (row - 1) cols
-        (* normal case, add None to last list *)
-        | _, _ ->
-            match board with
-            | [] -> inner [[None]] row (col - 1)
-            | last :: rest -> 
-                let newboard = (None :: last) :: rest in
-                inner newboard row (col - 1)
+let piece_of_char char =
+    let lower_char = Char.lowercase_ascii char in
+    let color = if char = lower_char then Black else White in
+    let piece = match lower_char with
+    | 'k' -> King
+    | 'q' -> Queen
+    | 'r' -> Rook
+    | 'b' -> Bishop
+    | 'n' -> Knight
+    | 'p' -> Pawn
+    | _ -> assert false
     in
-    inner [[]] rows cols
+    (piece, color)
 ;;
 
-let starting_board rows cols =
-    let all_pieces c = List.map (List.map (fun p -> Some (p, c))) [pawn_row cols; piece_row] in
-    let white = all_pieces White in
-    let black = all_pieces Black in
-    List.rev white @ empty_board 4 8 @ black
+let board_of_fen (fen: string) =
+    let prepend board sub =
+        match board with
+        | [] -> [sub]
+        | hd :: tl -> (sub @ hd) :: tl
+    in
+    let rec inner (board: board) (fen: char list) =
+        match fen with
+        | [] -> List.map List.rev board
+        | ch :: fen ->
+            match ch with
+            (* end of current row *)
+            | '/' -> inner ([] :: board) fen
+            (* prepend N spaces *)
+            | '0'..'9' -> 
+                let size = int_of_char ch - int_of_char '0' in
+                let newboard = prepend board @@ List.init size (fun x -> None) in
+                inner newboard fen
+            | _ -> inner (piece_of_char ch |> Option.some |> (fun p -> [p]) |> prepend board) fen
+    in
+    inner [[]] @@ explode fen
 ;;
+
 
 let string_of_piece (p: game_piece option) =
     let repr = function
       | King -> "k"
       | Queen -> "q"
       | Rook -> "r"
-      | Knight -> "h"
+      | Knight -> "n"
       | Bishop -> "b"
       | Pawn -> "p"
     in
@@ -124,6 +137,7 @@ let search_king color board =
     | None -> assert false
 ;;
 
+(* TODO: this function is pretty bad *)
 let print_board_with_moves board moves =
     let colored = "\027[41m" in
     let reset = "\027[0m" in
@@ -133,16 +147,17 @@ let print_board_with_moves board moves =
     print_col_edges ();
     newline ();
     for row = 0 to (rows - 1) do
-        Printf.printf "%c " (char_of_int (row + int_of_char '0' + 1));
+        Printf.printf "%d " @@ rows - row;
         print_row_edges ();
         let rec to_row_str acc col =
             if col = cols
             then acc
             else
-                let piece = string_of_piece (piece_at row col board) in
+                (* TODO: clean this up, reversing so that A1 is in the bottom left *)
+                let piece = string_of_piece (piece_at (rows - row - 1) col board) in
                 let colored_piece =
                     if List.exists (
-                        fun (x, y) -> (x, y) = (row, col)
+                        fun (x, y) -> (x, y) = (rows - row - 1, col)
                     ) moves
                     then colored ^ piece
                     else reset ^ piece in
@@ -162,7 +177,7 @@ let print_board board = print_board_with_moves board [];;
 
 let print_game board player =
     print_endline "";
-    print_endline ("Next player: " ^ (string_of_color player));
+    string_of_color player |> String.cat "Next player: " |> print_endline;
     print_board board;
 ;;
 
@@ -392,4 +407,6 @@ let play_game board =
     game_loop state board player
 ;;
 
-let () = play_game (starting_board rows cols);;
+let starting_position = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";;
+
+let () = play_game @@ board_of_fen starting_position;;
